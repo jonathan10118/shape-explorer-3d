@@ -10,8 +10,8 @@ export type SolidParam = {
 };
 
 export type Net =
-  | { type: "poly"; points: [number, number][]; label?: string }
-  | { type: "circle"; cx: number; cy: number; r: number; label?: string }
+  | { type: "poly"; points: [number, number][]; label?: string | undefined }
+  | { type: "circle"; cx: number; cy: number; r: number; label?: string | undefined }
   | {
       type: "sector";
       cx: number;
@@ -306,8 +306,8 @@ export const SOLIDS: SolidDef[] = [
       const base = ngon(3, R, 0, 0, -Math.PI / 2);
       const shapes: Net[] = [{ type: "poly", points: base, label: "base" }];
       for (let i = 0; i < 3; i++) {
-        const p1 = base[i];
-        const p2 = base[(i + 1) % 3];
+        const p1 = base[i]!;
+        const p2 = base[(i + 1) % 3]!;
         const mx = (p1[0] + p2[0]) / 2;
         const my = (p1[1] + p2[1]) / 2;
         const len = Math.hypot(mx, my) || 1;
