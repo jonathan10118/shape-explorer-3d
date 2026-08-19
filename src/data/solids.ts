@@ -19,8 +19,10 @@ export type Net =
       r: number;
       start: number;
       sweep: number;
-      label?: string;
+      label?: string | undefined;
     };
+
+export type Params = Record<ParamKey, number>;
 
 export type Measure = { label: string; formula: string; value: number; unit: string };
 
@@ -30,11 +32,11 @@ export type SolidDef = {
   family: "Corpos redondos" | "Prismas" | "Pirâmides" | "Poliedros de Platão";
   tagline: string;
   params: SolidParam[];
-  counts: (p: Record<string, number>) => { faces: number; edges: number; vertices: number };
-  measures: (p: Record<string, number>) => Measure[];
+  counts: (p: Params) => { faces: number; edges: number; vertices: number };
+  measures: (p: Params) => Measure[];
   facts: string[];
-  net: (p: Record<string, number>) => Net[];
-  geometry: (p: Record<string, number>) =>
+  net: (p: Params) => Net[];
+  geometry: (p: Params) =>
     | { kind: "box"; args: [number, number, number] }
     | { kind: "cylinder"; args: [number, number, number, number] }
     | { kind: "cone"; args: [number, number, number] }
