@@ -507,36 +507,31 @@ export const SOLIDS: SolidDef[] = [
     net: ({ a }) => {
       const ht = (Math.sqrt(3) / 2) * a;
       const shapes: Net[] = [];
-      const strip = (rowY: number, up: boolean, count: number, offset: number) => {
-        for (let i = 0; i < count; i++) {
-          const x0 = offset + i * (a / 2);
-          if (up) {
-            shapes.push({
-              type: "poly",
-              points: [
-                [x0, rowY + ht],
-                [x0 + a, rowY + ht],
-                [x0 + a / 2, rowY],
-              ],
-            });
-          } else {
-            shapes.push({
-              type: "poly",
-              points: [
-                [x0, rowY],
-                [x0 + a, rowY],
-                [x0 + a / 2, rowY + ht],
-              ],
-            });
-          }
+      const originX = -2.75 * a;
+      const tri = (x0: number, yBase: number, yTip: number) =>
+        shapes.push({
+          type: "poly",
+          points: [
+            [x0, yBase],
+            [x0 + a, yBase],
+            [x0 + a / 2, yTip],
+          ],
+        });
+      // Faixa antiprismática central: 10 triângulos alternados
+      for (let i = 0; i < 10; i++) {
+        const x0 = originX + i * (a / 2);
+        if (i % 2 === 0) {
+          tri(x0, 0.5 * ht, -0.5 * ht);
+          // "chapéu" inferior sobre a aresta de baixo
+          tri(x0, 0.5 * ht, 1.5 * ht);
+        } else {
+          tri(x0, -0.5 * ht, 0.5 * ht);
+          // "chapéu" superior sobre a aresta de cima
+          tri(x0, -0.5 * ht, -1.5 * ht);
         }
-      };
-      const originX = -(5 * a) / 2;
-      strip(-1.5 * ht, false, 5, originX + a / 2);
-      strip(-0.5 * ht, false, 9, originX);
-      strip(-0.5 * ht, true, 9, originX);
-      strip(0.5 * ht, true, 5, originX);
+      }
       return shapes;
+
     },
     geometry: ({ a }) => ({ kind: "platonic", solid: "icosa", radius: (a / 4) * Math.sqrt(10 + 2 * Math.sqrt(5)) }),
   },
