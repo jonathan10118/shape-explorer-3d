@@ -470,7 +470,7 @@ export const SOLIDS: SolidDef[] = [
           });
         }
       };
-      const gap = (R + m) * 2.25;
+      const gap = 2 * (2 * m + R) + 0.25;
       buildRing(-gap / 2, false);
       buildRing(gap / 2, true);
       return shapes;
