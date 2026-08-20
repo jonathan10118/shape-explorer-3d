@@ -1,266 +1,228 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Suspense, lazy, useEffect, useMemo, useState } from "react";
-import { Box, Grid2x2, Info, RotateCw, Ruler, Scan } from "lucide-react";
-import { SOLIDS, type Params, type SolidDef } from "@/data/solids";
-import SolidNet from "@/components/SolidNet";
-import { cn } from "@/lib/utils";
+import { useMemo, useState } from "react";
 
-const SolidScene = lazy(() => import("@/components/SolidScene"));
+import { SolidNet } from "@/components/SolidNet";
+import { SolidScene } from "@/components/SolidScene";
+import { SOLIDS, defaultsFor, type Rec } from "@/data/solids";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Sólidos Geométricos 3D — Visualize, planifique e calcule" },
+      { title: "Sólidos Geométricos 3D — Planificação, Medidas e Fórmulas" },
       {
         name: "description",
         content:
-          "Explore cone, cilindro, prismas, pirâmides, cubo, tetraedro, dodecaedro e icosaedro em 3D, com planificação, fórmulas e medidas interativas.",
+          "Explore 11 sólidos geométricos em 3D interativo: cone, cilindro, prismas, pirâmides, cubo, tetraedro, dodecaedro e icosaedro com planificação, medidas e fórmulas.",
       },
-      { property: "og:title", content: "Sólidos Geométricos 3D — Visualize, planifique e calcule" },
+      { property: "og:title", content: "Sólidos Geométricos 3D — Planificação e Medidas" },
       {
         property: "og:description",
         content:
-          "Visualização 3D interativa, planificações, medidas e informações de 11 sólidos geométricos.",
+          "Visualização 3D, planificação correta, fórmulas de área e volume de 11 sólidos geométricos.",
       },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
   component: Index,
 });
 
-function useMounted() {
-  const [m, setM] = useState(false);
-  useEffect(() => setM(true), []);
-  return m;
-}
-
-function defaults(solid: SolidDef): Params {
-  return Object.fromEntries(solid.params.map((p) => [p.key, p.default])) as Params;
-}
-
 function Index() {
-  const [solidId, setSolidId] = useState(SOLIDS[0]!.id);
-  const solid = useMemo(() => SOLIDS.find((s) => s.id === solidId)!, [solidId]);
-  const [params, setParams] = useState<Params>(() => defaults(SOLIDS[0]!));
+  const [id, setId] = useState(SOLIDS[0]!.id);
   const [tab, setTab] = useState<"3d" | "net">("3d");
-  const [spin, setSpin] = useState(true);
-  const [wireframe, setWireframe] = useState(false);
-  const mounted = useMounted();
+  const [wire, setWire] = useState(false);
+  const [params, setParams] = useState<Record<string, Rec>>(() =>
+    Object.fromEntries(SOLIDS.map((s) => [s.id, defaultsFor(s)])),
+  );
 
-  function select(s: SolidDef) {
-    setSolidId(s.id);
-    setParams(defaults(s));
-  }
+  const solid = useMemo(() => SOLIDS.find((s) => s.id === id)!, [id]);
+  const p = params[id]!;
+  const counts = solid.counts(p);
+  const measures = solid.measures(p);
+  const net = useMemo(() => solid.net(p), [solid, p]);
 
-  const counts = solid.counts(params);
-  const measures = solid.measures(params);
-  const families = [...new Set(SOLIDS.map((s) => s.family))];
+  const families = Array.from(new Set(SOLIDS.map((s) => s.family)));
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-border/70 bg-background/70 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-4 px-5 py-4">
-          <div className="flex size-10 items-center justify-center rounded-md border border-primary/40 bg-primary/10 text-primary">
-            <Box className="size-5" />
-          </div>
-          <div className="mr-auto">
-            <h1 className="text-lg font-semibold tracking-tight sm:text-xl">
-              Atlas de Sólidos Geométricos
-            </h1>
-            <p className="tick mt-0.5">visualização 3D · planificação · medidas</p>
-          </div>
-          <p className="hidden max-w-xs text-xs text-muted-foreground md:block">
-            Arraste para girar, use a roda do mouse para aproximar e ajuste as medidas para ver
-            fórmulas recalculadas em tempo real.
-          </p>
-        </div>
+    <div className="min-h-screen bg-background text-foreground">
+      <header className="border-b border-border/60 px-5 py-5">
+        <p className="font-mono text-xs tracking-[0.3em] text-primary uppercase">
+          Geometria espacial
+        </p>
+        <h1 className="mt-1 text-2xl font-bold tracking-tight sm:text-3xl">
+          Atlas dos Sólidos Geométricos
+        </h1>
+        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+          Visualização 3D interativa, planificação, medidas e informações de 11 sólidos.
+        </p>
       </header>
 
-      <main className="mx-auto grid max-w-7xl gap-5 px-5 py-6 lg:grid-cols-[240px_1fr]">
-        <nav aria-label="Lista de sólidos" className="panel h-fit p-3 lg:sticky lg:top-5">
+      <div className="mx-auto grid max-w-7xl gap-5 p-5 lg:grid-cols-[220px_1fr]">
+        <nav className="space-y-4">
           {families.map((f) => (
-            <div key={f} className="mb-3 last:mb-0">
-              <p className="tick px-2 pb-1.5">{f}</p>
-              <ul className="space-y-0.5">
+            <div key={f}>
+              <p className="mb-2 font-mono text-[11px] tracking-widest text-muted-foreground uppercase">
+                {f}
+              </p>
+              <div className="flex flex-wrap gap-1.5 lg:flex-col">
                 {SOLIDS.filter((s) => s.family === f).map((s) => (
-                  <li key={s.id}>
-                    <button
-                      onClick={() => select(s)}
-                      className={cn(
-                        "w-full rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
-                        s.id === solidId
-                          ? "bg-primary/15 font-medium text-primary"
-                          : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-                      )}
-                      aria-current={s.id === solidId ? "true" : undefined}
-                    >
-                      {s.name}
-                    </button>
-                  </li>
+                  <button
+                    key={s.id}
+                    onClick={() => setId(s.id)}
+                    className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                      s.id === id
+                        ? "border-primary bg-primary/15 text-primary"
+                        : "border-border/60 text-muted-foreground hover:border-primary/50 hover:text-foreground"
+                    }`}
+                  >
+                    {s.name}
+                  </button>
                 ))}
-              </ul>
+              </div>
             </div>
           ))}
         </nav>
 
-        <div className="grid gap-5 xl:grid-cols-[1fr_320px]">
-          <section className="panel overflow-hidden">
-            <div className="flex flex-wrap items-center gap-2 border-b border-border/70 px-3 py-2">
-              <h2 className="mr-auto pl-1 text-base font-semibold">{solid.name}</h2>
-              <div className="flex rounded-md border border-border p-0.5">
-                {(
-                  [
-                    ["3d", "3D", Scan],
-                    ["net", "Planificação", Grid2x2],
-                  ] as const
-                ).map(([key, label, Icon]) => (
-                  <button
-                    key={key}
-                    onClick={() => setTab(key)}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded px-2.5 py-1 text-xs transition-colors",
-                      tab === key
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    <Icon className="size-3.5" />
-                    {label}
-                  </button>
-                ))}
+        <main className="space-y-5">
+          <section className="rounded-xl border border-border/60 bg-card p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold">{solid.name}</h2>
+                <p className="text-sm text-muted-foreground">{solid.desc}</p>
               </div>
-              {tab === "3d" && (
-                <>
+              <div className="flex items-center gap-2">
+                <div className="flex rounded-lg border border-border/60 p-0.5">
+                  {(
+                    [
+                      ["3d", "3D"],
+                      ["net", "Planificação"],
+                    ] as const
+                  ).map(([k, label]) => (
+                    <button
+                      key={k}
+                      onClick={() => setTab(k)}
+                      className={`rounded-md px-3 py-1.5 text-xs font-medium ${
+                        tab === k
+                          ? "bg-primary text-primary-foreground"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {tab === "3d" && (
                   <button
-                    onClick={() => setSpin((v) => !v)}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs transition-colors",
-                      spin ? "text-accent" : "text-muted-foreground hover:text-foreground",
-                    )}
+                    onClick={() => setWire((w) => !w)}
+                    className="rounded-md border border-border/60 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
                   >
-                    <RotateCw className="size-3.5" /> Girar
+                    {wire ? "Sólido" : "Arestas"}
                   </button>
-                  <button
-                    onClick={() => setWireframe((v) => !v)}
-                    className={cn(
-                      "rounded-md border border-border px-2.5 py-1.5 text-xs transition-colors",
-                      wireframe ? "text-accent" : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    Ver arestas
-                  </button>
-                </>
-              )}
+                )}
+              </div>
             </div>
 
-            <div className="h-[420px] bg-[#0b1220] sm:h-[520px]">
+            <div className="h-[340px] overflow-hidden rounded-lg border border-border/60 bg-[#070d1b] sm:h-[440px]">
               {tab === "3d" ? (
-                mounted ? (
-                  <Suspense fallback={<Placeholder />}>
-                    <SolidScene solid={solid} params={params} wireframe={wireframe} spin={spin} />
-                  </Suspense>
-                ) : (
-                  <Placeholder />
-                )
+                <SolidScene geometry={solid.geometry(p)} wire={wire} />
               ) : (
-                <div className="h-full p-6">
-                  <SolidNet solid={solid} params={params} />
+                <div className="h-full w-full p-4">
+                  <SolidNet shapes={net} />
                 </div>
               )}
             </div>
-
-            <p className="border-t border-border/70 px-4 py-3 text-sm text-muted-foreground">
-              {solid.tagline}
+            <p className="mt-2 text-xs text-muted-foreground">
+              {tab === "3d"
+                ? "Arraste para girar · role para dar zoom."
+                : "Planificação em escala: dobre pelas arestas em comum para montar o sólido."}
             </p>
           </section>
 
-          <div className="space-y-5">
-            <section className="panel p-4">
-              <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-                <Ruler className="size-4 text-primary" /> Medidas
+          <div className="grid gap-5 md:grid-cols-2">
+            <section className="rounded-xl border border-border/60 bg-card p-4">
+              <h3 className="mb-3 font-mono text-xs tracking-widest text-primary uppercase">
+                Medidas
               </h3>
-              <div className="space-y-3">
-                {solid.params.map((p) => (
-                  <div key={p.key}>
-                    <div className="flex items-baseline justify-between">
-                      <label htmlFor={p.key} className="text-xs text-muted-foreground">
-                        {p.label}
-                      </label>
-                      <span className="font-mono text-sm text-accent">
-                        {params[p.key]?.toFixed(2)}
+              <div className="space-y-4">
+                {solid.params.map((pd) => (
+                  <label key={pd.key} className="block">
+                    <span className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">{pd.label}</span>
+                      <span className="font-mono text-foreground">
+                        {p[pd.key as keyof Rec].toFixed(1)} cm
                       </span>
-                    </div>
+                    </span>
                     <input
-                      id={p.key}
                       type="range"
-                      min={p.min}
-                      max={p.max}
-                      step={p.step}
-                      value={params[p.key]}
+                      min={pd.min}
+                      max={pd.max}
+                      step={pd.step}
+                      value={p[pd.key as keyof Rec]}
                       onChange={(e) =>
-                        setParams((prev) => ({ ...prev, [p.key]: Number(e.target.value) }))
+                        setParams((prev) => ({
+                          ...prev,
+                          [id]: { ...prev[id]!, [pd.key]: Number(e.target.value) },
+                        }))
                       }
-                      className="mt-1 w-full accent-[var(--primary)]"
+                      className="mt-2 w-full accent-[var(--net-stroke)]"
                     />
-                  </div>
+                  </label>
                 ))}
               </div>
 
-              <dl className="mt-4 space-y-2 border-t border-border/70 pt-3">
-                {measures.map((m) => (
-                  <div key={m.label} className="flex items-baseline justify-between gap-3">
-                    <dt className="text-xs">
-                      <span className="block text-foreground">{m.label}</span>
-                      <span className="font-mono text-[0.68rem] text-muted-foreground">
-                        {m.formula}
-                      </span>
-                    </dt>
-                    <dd className="shrink-0 font-mono text-sm text-accent">
-                      {m.value} <span className="text-[0.65rem] text-muted-foreground">{m.unit}</span>
-                    </dd>
-                  </div>
-                ))}
-              </dl>
+              <table className="mt-5 w-full text-sm">
+                <tbody>
+                  {measures.map((m) => (
+                    <tr key={m.label} className="border-t border-border/50">
+                      <td className="py-2 pr-2">
+                        <div>{m.label}</div>
+                        <div className="font-mono text-[11px] text-muted-foreground">
+                          {m.formula}
+                        </div>
+                      </td>
+                      <td className="py-2 text-right font-mono whitespace-nowrap text-primary">
+                        {m.value} {m.unit}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </section>
 
-            <section className="panel p-4">
-              <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-                <Info className="size-4 text-primary" /> Informações
+            <section className="rounded-xl border border-border/60 bg-card p-4">
+              <h3 className="mb-3 font-mono text-xs tracking-widest text-primary uppercase">
+                Informações
               </h3>
-              <div className="mb-3 grid grid-cols-3 gap-2 text-center">
+              <div className="grid grid-cols-3 gap-2 text-center">
                 {[
-                  ["Faces", counts.faces],
-                  ["Arestas", counts.edges],
-                  ["Vértices", counts.vertices],
-                ].map(([label, value]) => (
-                  <div key={label as string} className="rounded-md bg-secondary/60 py-2">
-                    <p className="font-mono text-lg text-primary">{value}</p>
-                    <p className="tick">{label}</p>
+                  ["Faces", counts.F],
+                  ["Arestas", counts.E],
+                  ["Vértices", counts.V],
+                ].map(([label, v]) => (
+                  <div key={label} className="rounded-lg border border-border/60 py-3">
+                    <div className="font-mono text-2xl text-primary">{v}</div>
+                    <div className="text-xs text-muted-foreground">{label}</div>
                   </div>
                 ))}
               </div>
-              <ul className="space-y-2 text-xs leading-relaxed text-muted-foreground">
+              {counts.V > 0 && (
+                <p className="mt-3 font-mono text-xs text-muted-foreground">
+                  Relação de Euler: F + V − A = {counts.F} + {counts.V} − {counts.E} ={" "}
+                  {counts.F + counts.V - counts.E}
+                </p>
+              )}
+              <ul className="mt-4 space-y-2 text-sm text-muted-foreground">
                 {solid.facts.map((f) => (
-                  <li key={f} className="border-l-2 border-accent/50 pl-2.5">
-                    {f}
+                  <li key={f} className="flex gap-2">
+                    <span className="text-primary">▸</span>
+                    <span>{f}</span>
                   </li>
                 ))}
               </ul>
             </section>
           </div>
-        </div>
-      </main>
-
-      <footer className="mx-auto max-w-7xl px-5 pb-8 pt-2 text-xs text-muted-foreground">
-        Medidas em unidades genéricas (u). Relação de Euler para poliedros convexos: F + V − A = 2.
-      </footer>
-    </div>
-  );
-}
-
-function Placeholder() {
-  return (
-    <div className="flex h-full items-center justify-center">
-      <p className="tick animate-pulse">carregando cena 3D…</p>
+        </main>
+      </div>
     </div>
   );
 }

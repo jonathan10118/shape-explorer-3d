@@ -1,66 +1,71 @@
 import { useMemo } from "react";
-import type { Params, SolidDef } from "@/data/solids";
 
-const TAU = Math.PI * 2;
+import type { NetShape } from "@/data/solids";
 
-function sectorPath(cx: number, cy: number, r: number, start: number, sweep: number) {
-  if (sweep >= TAU - 1e-6) {
-    return `M ${cx - r} ${cy} a ${r} ${r} 0 1 0 ${2 * r} 0 a ${r} ${r} 0 1 0 ${-2 * r} 0 Z`;
-  }
-  const x1 = cx + r * Math.cos(start);
-  const y1 = cy + r * Math.sin(start);
-  const x2 = cx + r * Math.cos(start + sweep);
-  const y2 = cy + r * Math.sin(start + sweep);
-  const large = sweep > Math.PI ? 1 : 0;
-  return `M ${cx} ${cy} L ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2} Z`;
+const d2r = (d: number) => (d * Math.PI) / 180;
+
+function sectorPath(cx: number, cy: number, r: number, a0: number, a1: number) {
+  const p0 = [cx + r * Math.cos(d2r(a0)), cy + r * Math.sin(d2r(a0))];
+  const p1 = [cx + r * Math.cos(d2r(a1)), cy + r * Math.sin(d2r(a1))];
+  const large = Math.abs(a1 - a0) > 180 ? 1 : 0;
+  return `M ${cx} ${cy} L ${p0[0]} ${p0[1]} A ${r} ${r} 0 ${large} 1 ${p1[0]} ${p1[1]} Z`;
 }
 
-export default function SolidNet({ solid, params }: { solid: SolidDef; params: Params }) {
-  const { shapes, viewBox } = useMemo(() => {
-    const list = solid.net(params);
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
-    const bump = (x: number, y: number) => {
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-    };
-    for (const s of list) {
-      if (s.type === "poly") s.points.forEach(([x, y]) => bump(x, y));
-      else if (s.type === "circle") {
-        bump(s.cx - s.r, s.cy - s.r);
-        bump(s.cx + s.r, s.cy + s.r);
-      } else {
-        bump(s.cx - s.r, s.cy - s.r);
-        bump(s.cx + s.r, s.cy + s.r);
+function bounds(shapes: NetShape[]) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const acc = (x: number, y: number) => {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  };
+  for (const s of shapes) {
+    if (s.kind === "poly") s.points.forEach(([x, y]) => acc(x, y));
+    else if (s.kind === "circle") {
+      acc(s.cx - s.r, s.cy - s.r);
+      acc(s.cx + s.r, s.cy + s.r);
+    } else {
+      acc(s.cx, s.cy);
+      const step = 2;
+      for (let a = s.a0; a <= s.a1 + 0.001; a += step) {
+        acc(s.cx + s.r * Math.cos(d2r(a)), s.cy + s.r * Math.sin(d2r(a)));
       }
+      acc(s.cx + s.r * Math.cos(d2r(s.a1)), s.cy + s.r * Math.sin(d2r(s.a1)));
     }
-    const pad = 0.6;
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+export function SolidNet({ shapes }: { shapes: NetShape[] }) {
+  const { viewBox, stroke } = useMemo(() => {
+    const b = bounds(shapes);
+    const w = b.maxX - b.minX;
+    const h = b.maxY - b.minY;
+    const pad = Math.max(w, h) * 0.06 + 0.4;
     return {
-      shapes: list,
-      viewBox: `${minX - pad} ${minY - pad} ${maxX - minX + pad * 2} ${maxY - minY + pad * 2}`,
+      viewBox: `${b.minX - pad} ${b.minY - pad} ${w + pad * 2} ${h + pad * 2}`,
+      stroke: Math.max(w, h) / 220,
     };
-  }, [solid, params]);
+  }, [shapes]);
 
   return (
-    <svg viewBox={viewBox} className="h-full w-full" role="img" aria-label={`Planificação do ${solid.name}`}>
+    <svg viewBox={viewBox} className="h-full w-full" role="img" aria-label="Planificação do sólido">
       <g
         fill="var(--net-fill)"
         stroke="var(--net-stroke)"
-        strokeWidth={0.045}
+        strokeWidth={stroke}
         strokeLinejoin="round"
-        vectorEffect="non-scaling-stroke"
       >
         {shapes.map((s, i) =>
-          s.type === "poly" ? (
+          s.kind === "poly" ? (
             <polygon key={i} points={s.points.map(([x, y]) => `${x},${y}`).join(" ")} />
-          ) : s.type === "circle" ? (
+          ) : s.kind === "circle" ? (
             <circle key={i} cx={s.cx} cy={s.cy} r={s.r} />
           ) : (
-            <path key={i} d={sectorPath(s.cx, s.cy, s.r, s.start, s.sweep)} />
+            <path key={i} d={sectorPath(s.cx, s.cy, s.r, s.a0, s.a1)} />
           ),
         )}
       </g>

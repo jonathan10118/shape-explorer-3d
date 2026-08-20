@@ -1,81 +1,51 @@
 import { Canvas } from "@react-three/fiber";
-import { OrbitControls, Edges, Grid, ContactShadows } from "@react-three/drei";
-import { useMemo } from "react";
-import * as THREE from "three";
-import type { Params, SolidDef } from "@/data/solids";
+import { OrbitControls, Edges, Stage } from "@react-three/drei";
+import { Suspense } from "react";
 
-function SolidMesh({ solid, params, wireframe }: { solid: SolidDef; params: Params; wireframe: boolean }) {
-  const geometry = useMemo(() => {
-    const spec = solid.geometry(params);
-    switch (spec.kind) {
-      case "box":
-        return new THREE.BoxGeometry(...spec.args);
-      case "cylinder":
-        return new THREE.CylinderGeometry(...spec.args);
-      case "cone":
-        return new THREE.ConeGeometry(...spec.args);
-      case "platonic":
-        if (spec.solid === "tetra") return new THREE.TetrahedronGeometry(spec.radius);
-        if (spec.solid === "dodeca") return new THREE.DodecahedronGeometry(spec.radius);
-        return new THREE.IcosahedronGeometry(spec.radius);
-    }
-  }, [solid, params]);
+import type { Geometry3D } from "@/data/solids";
+
+function Mesh({ g, wire }: { g: Geometry3D; wire: boolean }) {
+  const geo =
+    g.type === "cone" ? (
+      <coneGeometry args={[g.r, g.h, g.seg]} />
+    ) : g.type === "cylinder" || g.type === "prism" ? (
+      <cylinderGeometry args={[g.r, g.r, g.h, g.seg]} />
+    ) : g.type === "box" ? (
+      <boxGeometry args={[g.a, g.b, g.c]} />
+    ) : g.solid === "tetra" ? (
+      <tetrahedronGeometry args={[g.r]} />
+    ) : g.solid === "dodeca" ? (
+      <dodecahedronGeometry args={[g.r]} />
+    ) : (
+      <icosahedronGeometry args={[g.r]} />
+    );
 
   return (
-    <group>
-      <mesh geometry={geometry} castShadow>
-        <meshStandardMaterial
-          color="#7fd4e8"
-          roughness={0.28}
-          metalness={0.15}
-          transparent
-          opacity={wireframe ? 0.12 : 0.92}
-          flatShading
-        />
-        <Edges threshold={12} color="#ffd27d" scale={1.001} />
-      </mesh>
-    </group>
+    <mesh castShadow receiveShadow>
+      {geo}
+      <meshStandardMaterial
+        color="#3fd0e0"
+        roughness={0.35}
+        metalness={0.1}
+        transparent
+        opacity={wire ? 0.12 : 0.85}
+        flatShading
+      />
+      <Edges threshold={15} color="#ffc65c" scale={1.001} />
+    </mesh>
   );
 }
 
-export default function SolidScene({
-  solid,
-  params,
-  wireframe,
-  spin,
-}: {
-  solid: SolidDef;
-  params: Params;
-  wireframe: boolean;
-  spin: boolean;
-}) {
+export function SolidScene({ geometry, wire }: { geometry: Geometry3D; wire: boolean }) {
   return (
-    <Canvas shadows camera={{ position: [6, 4.5, 7], fov: 42 }} dpr={[1, 2]}>
-      <color attach="background" args={["#0b1220"]} />
-      <ambientLight intensity={0.55} />
-      <directionalLight position={[5, 8, 5]} intensity={1.5} castShadow />
-      <directionalLight position={[-6, 3, -4]} intensity={0.5} color="#7fd4e8" />
-      <group position={[0, 0.4, 0]}>
-        <SolidMesh solid={solid} params={params} wireframe={wireframe} />
-      </group>
-      <ContactShadows position={[0, -2.6, 0]} opacity={0.45} scale={18} blur={2.6} far={8} />
-      <Grid
-        position={[0, -2.6, 0]}
-        args={[24, 24]}
-        cellSize={0.6}
-        cellColor="#1e3350"
-        sectionSize={3}
-        sectionColor="#2b4c73"
-        fadeDistance={26}
-        infiniteGrid
-      />
-      <OrbitControls
-        enablePan={false}
-        autoRotate={spin}
-        autoRotateSpeed={1.1}
-        minDistance={3}
-        maxDistance={20}
-      />
+    <Canvas shadows dpr={[1, 2]} camera={{ position: [8, 6, 10], fov: 40 }}>
+      <color attach="background" args={["#070d1b"]} />
+      <Suspense fallback={null}>
+        <Stage intensity={0.5} environment="city" adjustCamera={1.4} shadows="contact">
+          <Mesh g={geometry} wire={wire} />
+        </Stage>
+      </Suspense>
+      <OrbitControls makeDefault autoRotate autoRotateSpeed={0.8} enablePan={false} />
     </Canvas>
   );
 }
