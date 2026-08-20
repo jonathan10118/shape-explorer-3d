@@ -142,3 +142,27 @@
     color: var(--color-foreground);
   }
 }
+
+/* Tema "blueprint noturno" do atlas de sólidos */
+:root {
+  --radius: 0.75rem;
+  --background: oklch(0.17 0.045 258);
+  --foreground: oklch(0.95 0.015 240);
+  --card: oklch(0.22 0.05 258);
+  --card-foreground: oklch(0.95 0.015 240);
+  --popover: oklch(0.22 0.05 258);
+  --popover-foreground: oklch(0.95 0.015 240);
+  --primary: oklch(0.82 0.14 195);
+  --primary-foreground: oklch(0.18 0.05 258);
+  --secondary: oklch(0.28 0.05 258);
+  --secondary-foreground: oklch(0.95 0.015 240);
+  --muted: oklch(0.28 0.05 258);
+  --muted-foreground: oklch(0.72 0.03 245);
+  --accent: oklch(0.83 0.15 82);
+  --accent-foreground: oklch(0.18 0.05 258);
+  --border: oklch(0.82 0.14 195 / 25%);
+  --input: oklch(0.82 0.14 195 / 25%);
+  --ring: oklch(0.82 0.14 195);
+  --net-fill: oklch(0.82 0.14 195 / 14%);
+  --net-stroke: oklch(0.83 0.15 82);
+}
