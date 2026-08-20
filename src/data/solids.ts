@@ -1,9 +1,17 @@
 export type Pt = [number, number];
 
 export type NetShape =
-  | { kind: "poly"; points: Pt[] }
-  | { kind: "circle"; cx: number; cy: number; r: number }
-  | { kind: "sector"; cx: number; cy: number; r: number; a0: number; a1: number };
+  | { kind: "poly"; points: Pt[]; role?: "base" | "lateral" }
+  | { kind: "circle"; cx: number; cy: number; r: number; role?: "base" | "lateral" }
+  | {
+      kind: "sector";
+      cx: number;
+      cy: number;
+      r: number;
+      start: number;
+      end: number;
+      role?: "base" | "lateral";
+    };
 
 export type ParamDef = {
   key: string;
@@ -14,661 +22,585 @@ export type ParamDef = {
   def: number;
 };
 
-export type Geometry3D =
-  | { type: "cone"; r: number; h: number; seg: number }
-  | { type: "cylinder"; r: number; h: number; seg: number }
-  | { type: "box"; a: number; b: number; c: number }
-  | { type: "prism"; r: number; h: number; seg: number }
-  | { type: "poly"; solid: "tetra" | "dodeca" | "icosa"; r: number };
-
 export type Measure = { label: string; formula: string; value: number; unit: string };
 
-export type Solid = {
+export type SolidDef = {
   id: string;
   name: string;
-  family: "Corpos redondos" | "Prismas" | "Pirâmides" | "Poliedros de Platão";
-  desc: string;
+  family: string;
+  description: string;
   params: ParamDef[];
-  counts: (p: Rec) => { F: number; E: number; V: number };
-  measures: (p: Rec) => Measure[];
-  net: (p: Rec) => NetShape[];
-  geometry: (p: Rec) => Geometry3D;
+  counts: { faces: number; edges: number; vertices: number } | null;
   facts: string[];
+  measures: (p: Record<string, number>) => Measure[];
+  net: (p: Record<string, number>) => NetShape[];
 };
 
-export type Rec = { r: number; h: number; a: number; b: number; c: number };
+/* ---------- helpers geométricos ---------- */
 
-const TAU = Math.PI * 2;
-const d2r = (d: number) => (d * Math.PI) / 180;
+const rot = (v: Pt, a: number): Pt => [
+  v[0] * Math.cos(a) - v[1] * Math.sin(a),
+  v[0] * Math.sin(a) + v[1] * Math.cos(a),
+];
 
-/** Regular polygon with n sides of length `a`, centered at (cx,cy), first vertex at angle `rot`. */
-function regular(n: number, a: number, cx = 0, cy = 0, rot = -90): Pt[] {
-  const R = a / (2 * Math.sin(Math.PI / n));
-  const pts: Pt[] = [];
-  for (let i = 0; i < n; i++) {
-    const ang = d2r(rot) + (i * TAU) / n;
-    pts.push([cx + R * Math.cos(ang), cy + R * Math.sin(ang)]);
+/** Polígono regular de n lados construído sobre a aresta a->b. */
+export function polyOnEdge(a: Pt, b: Pt, n: number): Pt[] {
+  const step = (2 * Math.PI) / n;
+  const pts: Pt[] = [a, b];
+  let d: Pt = [b[0] - a[0], b[1] - a[1]];
+  let cur: Pt = b;
+  for (let i = 0; i < n - 2; i++) {
+    d = rot(d, step);
+    cur = [cur[0] + d[0], cur[1] + d[1]];
+    pts.push(cur);
   }
   return pts;
 }
 
-function rotate180About(pts: Pt[], m: Pt): Pt[] {
-  return pts.map(([x, y]) => [2 * m[0] - x, 2 * m[1] - y] as Pt);
+/** Triângulo isósceles de base a->b e altura `hgt` (do lado oposto ao giro +). */
+function triOnEdge(a: Pt, b: Pt, hgt: number): Pt[] {
+  const mx = (a[0] + b[0]) / 2;
+  const my = (a[1] + b[1]) / 2;
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len;
+  const ny = dx / len;
+  return [a, b, [mx + nx * hgt, my + ny * hgt]];
 }
 
-function translate(pts: Pt[], dx: number, dy: number): Pt[] {
-  return pts.map(([x, y]) => [x + dx, y + dy] as Pt);
+function regularPolygon(cx: number, cy: number, r: number, n: number, offset = -Math.PI / 2): Pt[] {
+  return Array.from({ length: n }, (_, i): Pt => {
+    const a = offset + (i * 2 * Math.PI) / n;
+    return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+  });
 }
 
-/** Pentagon "flower": one central pentagon + 5 pentagons folded out on each edge. */
-function pentagonFlower(a: number, cx: number, cy: number, rot: number): NetShape[] {
-  const center = regular(5, a, cx, cy, rot);
-  const shapes: NetShape[] = [{ kind: "poly", points: center }];
-  for (let i = 0; i < 5; i++) {
-    const p = center[i]!;
-    const q = center[(i + 1) % 5]!;
-    const m: Pt = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
-    shapes.push({ kind: "poly", points: rotate180About(center, m) });
+const rectPts = (x: number, y: number, w: number, h: number): Pt[] => [
+  [x, y],
+  [x + w, y],
+  [x + w, y + h],
+  [x, y + h],
+];
+
+/** Planificação de prisma reto de base n-gonal regular. */
+function prismNet(n: number, s: number, h: number): NetShape[] {
+  const shapes: NetShape[] = [];
+  for (let i = 0; i < n; i++) {
+    shapes.push({ kind: "poly", points: rectPts(i * s, 0, s, h), role: "lateral" });
+  }
+  const k = Math.floor(n / 2) - (n % 2 === 0 ? 1 : 0);
+  // base superior: acima do retângulo k
+  shapes.push({
+    kind: "poly",
+    points: polyOnEdge([(k + 1) * s, 0], [k * s, 0], n),
+    role: "base",
+  });
+  // base inferior: abaixo do retângulo k
+  shapes.push({
+    kind: "poly",
+    points: polyOnEdge([k * s, h], [(k + 1) * s, h], n),
+    role: "base",
+  });
+  return shapes;
+}
+
+/** Planificação de pirâmide reta de base n-gonal regular. */
+function pyramidNet(n: number, s: number, h: number): NetShape[] {
+  const R = s / (2 * Math.sin(Math.PI / n));
+  const apothem = s / (2 * Math.tan(Math.PI / n));
+  const slant = Math.sqrt(h * h + apothem * apothem);
+  const base = regularPolygon(0, 0, R, n);
+  const shapes: NetShape[] = [{ kind: "poly", points: base, role: "base" }];
+  for (let i = 0; i < n; i++) {
+    const a = base[i];
+    const b = base[(i + 1) % n];
+    // normal apontando para fora do polígono
+    const mx = (a[0] + b[0]) / 2;
+    const my = (a[1] + b[1]) / 2;
+    const out = Math.hypot(mx, my) > 0 ? 1 : 1;
+    const tri = triOnEdge(a, b, slant);
+    const apex = tri[2];
+    const outward = Math.hypot(apex[0], apex[1]) > Math.hypot(mx, my);
+    shapes.push({
+      kind: "poly",
+      points: outward ? tri : triOnEdge(b, a, slant * out),
+      role: "lateral",
+    });
   }
   return shapes;
 }
 
-/** Prism net: lateral rectangles in a row + two regular n-gon bases. */
-function prismNet(n: number, a: number, h: number): NetShape[] {
+/** Planificação do dodecaedro: duas "flores" unidas por uma aresta (rede única). */
+function dodecaNet(s: number): NetShape[] {
   const shapes: NetShape[] = [];
-  for (let i = 0; i < n; i++) {
+  const push = (pts: Pt[], role: "base" | "lateral") =>
+    shapes.push({ kind: "poly", points: pts, role });
+
+  // Flor A
+  const centerA = polyOnEdge([0, 0], [s, 0], 5);
+  push(centerA, "base");
+  const petals: Pt[][] = [];
+  for (let i = 0; i < 5; i++) {
+    const a = centerA[i];
+    const b = centerA[(i + 1) % 5];
+    const petal = polyOnEdge(b, a, 5);
+    petals.push(petal);
+    push(petal, "lateral");
+  }
+
+  // Ponte: pentágono colado na aresta externa de uma pétala (pontas unidas)
+  const p = petals[0];
+  const bridge = polyOnEdge(p[3], p[2], 5);
+  push(bridge, "lateral");
+
+  // Flor B: centro colado na ponte + 4 pétalas restantes
+  const centerB = polyOnEdge(bridge[3], bridge[2], 5);
+  push(centerB, "base");
+  for (let i = 1; i < 5; i++) {
+    const a = centerB[i];
+    const b = centerB[(i + 1) % 5];
+    push(polyOnEdge(b, a, 5), "lateral");
+  }
+  return shapes;
+}
+
+/** Planificação do icosaedro: faixa antiprismática de 10 triângulos + 5 calotas em cada lado. */
+function icosaNet(s: number): NetShape[] {
+  const h = (s * Math.sqrt(3)) / 2;
+  const shapes: NetShape[] = [];
+  for (let i = 0; i < 10; i++) {
+    const x = (i * s) / 2;
+    if (i % 2 === 0) {
+      shapes.push({
+        kind: "poly",
+        points: [
+          [x, h],
+          [x + s, h],
+          [x + s / 2, 0],
+        ],
+        role: "lateral",
+      });
+    } else {
+      shapes.push({
+        kind: "poly",
+        points: [
+          [x, 0],
+          [x + s, 0],
+          [x + s / 2, h],
+        ],
+        role: "lateral",
+      });
+    }
+  }
+  for (let i = 0; i < 5; i++) {
+    const x = i * s;
+    // calota superior sobre triângulo apontado para cima
     shapes.push({
       kind: "poly",
       points: [
-        [i * a, 0],
-        [(i + 1) * a, 0],
-        [(i + 1) * a, h],
-        [i * a, h],
+        [x + s / 2, 0],
+        [x + s * 1.5, 0],
+        [x + s, -h],
       ],
+      role: "base",
     });
-  }
-  const apo = a / (2 * Math.tan(Math.PI / n));
-  const R = a / (2 * Math.sin(Math.PI / n));
-  // base attached to the top edge of the first rectangle
-  const topBase = regular(n, a, a / 2, -apo, n % 2 === 0 ? -90 + 180 / n : -90);
-  const botBase = regular(n, a, a / 2, h + apo, n % 2 === 0 ? 90 + 180 / n : 90);
-  shapes.push({ kind: "poly", points: alignBase(topBase, a, 0, true) });
-  shapes.push({ kind: "poly", points: alignBase(botBase, a, h, false) });
-  void R;
-  return shapes;
-}
-
-/** Snap a regular polygon so that one of its edges coincides with [0,y]-[a,y]. */
-function alignBase(pts: Pt[], a: number, y: number, above: boolean): Pt[] {
-  // find the edge closest to horizontal at the correct side, then translate
-  let best = 0;
-  let bestVal = Infinity;
-  for (let i = 0; i < pts.length; i++) {
-    const p = pts[i]!;
-    const q = pts[(i + 1) % pts.length]!;
-    const horiz = Math.abs(p[1] - q[1]);
-    const my = (p[1] + q[1]) / 2;
-    const score = horiz * 1000 + (above ? -my : my);
-    if (score < bestVal) {
-      bestVal = score;
-      best = i;
-    }
-  }
-  const p = pts[best]!;
-  const q = pts[(best + 1) % pts.length]!;
-  const mx = (p[0] + q[0]) / 2;
-  const my = (p[1] + q[1]) / 2;
-  return translate(pts, a / 2 - mx, y - my);
-}
-
-/** Pyramid net: regular n-gon base + n isosceles triangles folded out. */
-function pyramidNet(n: number, a: number, h: number): NetShape[] {
-  const base = regular(n, a, 0, 0, -90);
-  const apo = a / (2 * Math.tan(Math.PI / n));
-  const slant = Math.sqrt(h * h + apo * apo);
-  const shapes: NetShape[] = [{ kind: "poly", points: base }];
-  for (let i = 0; i < n; i++) {
-    const p = base[i]!;
-    const q = base[(i + 1) % n]!;
-    const m: Pt = [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
-    const len = Math.hypot(m[0], m[1]) || 1;
-    const nx = m[0] / len;
-    const ny = m[1] / len;
+    // calota inferior
     shapes.push({
       kind: "poly",
-      points: [p, q, [m[0] + nx * slant, m[1] + ny * slant]],
+      points: [
+        [x, h],
+        [x + s, h],
+        [x + s / 2, 2 * h],
+      ],
+      role: "base",
     });
   }
   return shapes;
 }
 
-const round = (v: number) => Math.round(v * 100) / 100;
+const fmt = (n: number) => n;
 
-export const SOLIDS: Solid[] = [
+/* ---------- definições dos sólidos ---------- */
+
+export const SOLIDS: SolidDef[] = [
   {
     id: "cone",
     name: "Cone",
     family: "Corpos redondos",
-    desc: "Sólido de revolução gerado por um triângulo retângulo girando em torno de um cateto.",
+    description:
+      "Sólido gerado pela rotação de um triângulo retângulo em torno de um cateto. Tem uma base circular e uma superfície lateral curva que termina no vértice.",
     params: [
-      { key: "r", label: "Raio da base (r)", min: 1, max: 6, step: 0.1, def: 3 },
-      { key: "h", label: "Altura (h)", min: 1, max: 10, step: 0.1, def: 5 },
+      { key: "r", label: "Raio da base (r)", min: 1, max: 6, step: 0.1, def: 2 },
+      { key: "h", label: "Altura (h)", min: 1, max: 10, step: 0.1, def: 4 },
     ],
-    counts: () => ({ F: 2, E: 1, V: 1 }),
+    counts: null,
+    facts: [
+      "A geratriz vale g = √(r² + h²).",
+      "A planificação lateral é um setor circular de raio g.",
+      "O volume do cone é 1/3 do volume do cilindro de mesma base e altura.",
+    ],
     measures: ({ r, h }) => {
       const g = Math.hypot(r, h);
       return [
-        { label: "Geratriz", formula: "g = √(r² + h²)", value: round(g), unit: "cm" },
-        {
-          label: "Área da base",
-          formula: "A_b = π·r²",
-          value: round(Math.PI * r * r),
-          unit: "cm²",
-        },
-        {
-          label: "Área lateral",
-          formula: "A_l = π·r·g",
-          value: round(Math.PI * r * g),
-          unit: "cm²",
-        },
+        { label: "Geratriz", formula: "g = √(r² + h²)", value: fmt(g), unit: "cm" },
+        { label: "Área da base", formula: "A_b = π·r²", value: Math.PI * r * r, unit: "cm²" },
+        { label: "Área lateral", formula: "A_l = π·r·g", value: Math.PI * r * g, unit: "cm²" },
         {
           label: "Área total",
           formula: "A_t = π·r·(r + g)",
-          value: round(Math.PI * r * (r + g)),
+          value: Math.PI * r * (r + g),
           unit: "cm²",
         },
         {
           label: "Volume",
           formula: "V = (π·r²·h)/3",
-          value: round((Math.PI * r * r * h) / 3),
+          value: (Math.PI * r * r * h) / 3,
           unit: "cm³",
         },
       ];
     },
     net: ({ r, h }) => {
       const g = Math.hypot(r, h);
-      const theta = (TAU * r) / g; // ângulo do setor circular
-      // apex na origem, setor abrindo para baixo, círculo tangente ao meio do arco
-      const a0 = 90 - (theta * 180) / Math.PI / 2;
-      const a1 = 90 + (theta * 180) / Math.PI / 2;
+      const theta = (2 * Math.PI * r) / g; // ângulo do setor
+      const start = -Math.PI / 2 - theta / 2;
+      const end = start + theta;
       return [
-        { kind: "sector", cx: 0, cy: 0, r: g, a0, a1 },
-        { kind: "circle", cx: 0, cy: g + r, r },
+        { kind: "sector", cx: 0, cy: 0, r: g, start, end, role: "lateral" },
+        { kind: "circle", cx: 0, cy: -g - r, r, role: "base" },
       ];
     },
-    geometry: ({ r, h }) => ({ type: "cone", r, h, seg: 64 }),
-    facts: [
-      "A planificação é um círculo (base) mais um setor circular de raio igual à geratriz g.",
-      "O ângulo do setor vale θ = 2π·r/g radianos — nunca uma volta completa.",
-      "O volume é exatamente 1/3 do cilindro de mesma base e mesma altura.",
-    ],
   },
   {
     id: "cilindro",
     name: "Cilindro",
     family: "Corpos redondos",
-    desc: "Sólido de revolução gerado por um retângulo girando em torno de um de seus lados.",
+    description:
+      "Sólido de revolução com duas bases circulares paralelas e congruentes, ligadas por uma superfície lateral que se planifica como um retângulo.",
     params: [
-      { key: "r", label: "Raio da base (r)", min: 1, max: 6, step: 0.1, def: 2.5 },
-      { key: "h", label: "Altura (h)", min: 1, max: 10, step: 0.1, def: 6 },
+      { key: "r", label: "Raio da base (r)", min: 1, max: 6, step: 0.1, def: 2 },
+      { key: "h", label: "Altura (h)", min: 1, max: 10, step: 0.1, def: 4 },
     ],
-    counts: () => ({ F: 3, E: 2, V: 0 }),
+    counts: null,
+    facts: [
+      "A largura do retângulo lateral é o perímetro da base: 2πr.",
+      "Se h = 2r, o cilindro é equilátero.",
+      "Volume = área da base × altura.",
+    ],
     measures: ({ r, h }) => [
-      {
-        label: "Perímetro da base",
-        formula: "P = 2·π·r",
-        value: round(TAU * r),
-        unit: "cm",
-      },
-      { label: "Área da base", formula: "A_b = π·r²", value: round(Math.PI * r * r), unit: "cm²" },
-      {
-        label: "Área lateral",
-        formula: "A_l = 2·π·r·h",
-        value: round(TAU * r * h),
-        unit: "cm²",
-      },
+      { label: "Perímetro da base", formula: "P = 2·π·r", value: 2 * Math.PI * r, unit: "cm" },
+      { label: "Área da base", formula: "A_b = π·r²", value: Math.PI * r * r, unit: "cm²" },
+      { label: "Área lateral", formula: "A_l = 2·π·r·h", value: 2 * Math.PI * r * h, unit: "cm²" },
       {
         label: "Área total",
         formula: "A_t = 2·π·r·(r + h)",
-        value: round(TAU * r * (r + h)),
+        value: 2 * Math.PI * r * (r + h),
         unit: "cm²",
       },
-      { label: "Volume", formula: "V = π·r²·h", value: round(Math.PI * r * r * h), unit: "cm³" },
+      { label: "Volume", formula: "V = π·r²·h", value: Math.PI * r * r * h, unit: "cm³" },
     ],
     net: ({ r, h }) => {
-      const w = TAU * r; // a largura do retângulo é o comprimento da circunferência
+      const w = 2 * Math.PI * r;
       return [
-        {
-          kind: "poly",
-          points: [
-            [0, 0],
-            [w, 0],
-            [w, h],
-            [0, h],
-          ],
-        },
-        { kind: "circle", cx: w / 2, cy: -r, r },
-        { kind: "circle", cx: w / 2, cy: h + r, r },
+        { kind: "poly", points: rectPts(0, 0, w, h), role: "lateral" },
+        { kind: "circle", cx: w / 2, cy: -r, r, role: "base" },
+        { kind: "circle", cx: w / 2, cy: h + r, r, role: "base" },
       ];
     },
-    geometry: ({ r, h }) => ({ type: "cylinder", r, h, seg: 64 }),
-    facts: [
-      "O retângulo lateral tem largura exatamente igual a 2π·r (o contorno da base).",
-      "Os dois círculos ficam tangentes ao retângulo, um em cima e outro embaixo.",
-      "Se h = 2r, o cilindro é dito equilátero.",
-    ],
   },
   {
     id: "paralelepipedo",
     name: "Paralelepípedo",
     family: "Prismas",
-    desc: "Prisma reto de base retangular: todas as seis faces são retângulos.",
+    description:
+      "Prisma reto de base retangular. Todas as seis faces são retângulos e as faces opostas são congruentes.",
     params: [
-      { key: "a", label: "Comprimento (a)", min: 1, max: 8, step: 0.1, def: 5 },
-      { key: "b", label: "Largura (b)", min: 1, max: 8, step: 0.1, def: 3 },
-      { key: "c", label: "Altura (c)", min: 1, max: 8, step: 0.1, def: 2 },
+      { key: "a", label: "Comprimento (a)", min: 1, max: 8, step: 0.1, def: 4 },
+      { key: "b", label: "Largura (b)", min: 1, max: 8, step: 0.1, def: 2.5 },
+      { key: "c", label: "Altura (c)", min: 1, max: 8, step: 0.1, def: 3 },
     ],
-    counts: () => ({ F: 6, E: 12, V: 8 }),
+    counts: { faces: 6, edges: 12, vertices: 8 },
+    facts: [
+      "A diagonal do bloco vale D = √(a² + b² + c²).",
+      "É o sólido do dia a dia: caixas, tijolos e livros.",
+    ],
     measures: ({ a, b, c }) => [
-      {
-        label: "Área total",
-        formula: "A = 2(ab + ac + bc)",
-        value: round(2 * (a * b + a * c + b * c)),
-        unit: "cm²",
-      },
-      { label: "Volume", formula: "V = a·b·c", value: round(a * b * c), unit: "cm³" },
       {
         label: "Diagonal",
         formula: "D = √(a² + b² + c²)",
-        value: round(Math.sqrt(a * a + b * b + c * c)),
+        value: Math.sqrt(a * a + b * b + c * c),
         unit: "cm",
       },
       {
-        label: "Soma das arestas",
-        formula: "S = 4(a + b + c)",
-        value: round(4 * (a + b + c)),
-        unit: "cm",
+        label: "Área lateral",
+        formula: "A_l = 2·c·(a + b)",
+        value: 2 * c * (a + b),
+        unit: "cm²",
       },
+      {
+        label: "Área total",
+        formula: "A_t = 2·(ab + ac + bc)",
+        value: 2 * (a * b + a * c + b * c),
+        unit: "cm²",
+      },
+      { label: "Volume", formula: "V = a·b·c", value: a * b * c, unit: "cm³" },
     ],
-    net: ({ a, b, c }) => {
-      const rect = (x: number, y: number, w: number, hh: number): NetShape => ({
-        kind: "poly",
-        points: [
-          [x, y],
-          [x + w, y],
-          [x + w, y + hh],
-          [x, y + hh],
-        ],
-      });
-      return [
-        rect(c, 0, a, b),
-        rect(0, b, c, c),
-        rect(c, b, a, c),
-        rect(c + a, b, c, c),
-        rect(c, b + c, a, b),
-        rect(c, b + c + b, a, c),
-      ];
-    },
-    geometry: ({ a, b, c }) => ({ type: "box", a, b: c, c: b }),
-    facts: [
-      "É o sólido das caixas: a planificação em cruz tem 3 pares de faces iguais.",
-      "Todas as faces opostas são congruentes e paralelas.",
-      "Quando a = b = c, o paralelepípedo vira um cubo.",
+    net: ({ a, b, c }) => [
+      { kind: "poly", points: rectPts(0, 0, b, c), role: "lateral" },
+      { kind: "poly", points: rectPts(b, 0, a, c), role: "lateral" },
+      { kind: "poly", points: rectPts(b + a, 0, b, c), role: "lateral" },
+      { kind: "poly", points: rectPts(b + a + b, 0, a, c), role: "lateral" },
+      { kind: "poly", points: rectPts(b, -b, a, b), role: "base" },
+      { kind: "poly", points: rectPts(b, c, a, b), role: "base" },
     ],
   },
   {
     id: "cubo",
     name: "Cubo",
     family: "Poliedros de Platão",
-    desc: "Hexaedro regular: seis faces quadradas idênticas.",
-    params: [{ key: "a", label: "Aresta (a)", min: 1, max: 8, step: 0.1, def: 4 }],
-    counts: () => ({ F: 6, E: 12, V: 8 }),
-    measures: ({ a }) => [
-      { label: "Área da face", formula: "A_f = a²", value: round(a * a), unit: "cm²" },
-      { label: "Área total", formula: "A = 6a²", value: round(6 * a * a), unit: "cm²" },
-      { label: "Volume", formula: "V = a³", value: round(a ** 3), unit: "cm³" },
-      { label: "Diagonal", formula: "D = a√3", value: round(a * Math.sqrt(3)), unit: "cm" },
-    ],
-    net: ({ a }) => {
-      const rect = (x: number, y: number): NetShape => ({
-        kind: "poly",
-        points: [
-          [x, y],
-          [x + a, y],
-          [x + a, y + a],
-          [x, y + a],
-        ],
-      });
-      return [rect(a, 0), rect(0, a), rect(a, a), rect(2 * a, a), rect(a, 2 * a), rect(a, 3 * a)];
-    },
-    geometry: ({ a }) => ({ type: "box", a, b: a, c: a }),
+    description:
+      "Hexaedro regular: seis faces quadradas congruentes. É um dos cinco sólidos de Platão.",
+    params: [{ key: "a", label: "Aresta (a)", min: 1, max: 8, step: 0.1, def: 3 }],
+    counts: { faces: 6, edges: 12, vertices: 8 },
     facts: [
-      "Existem 11 planificações diferentes possíveis para o cubo.",
-      "É o único poliedro de Platão que preenche o espaço sozinho.",
-      "Euler: 6 + 8 − 12 = 2.",
+      "Existem 11 planificações diferentes para o cubo.",
+      "A diagonal do cubo vale a√3.",
+      "É o dual do octaedro.",
+    ],
+    measures: ({ a }) => [
+      { label: "Diagonal da face", formula: "d = a√2", value: a * Math.SQRT2, unit: "cm" },
+      { label: "Diagonal do cubo", formula: "D = a√3", value: a * Math.sqrt(3), unit: "cm" },
+      { label: "Área total", formula: "A_t = 6·a²", value: 6 * a * a, unit: "cm²" },
+      { label: "Volume", formula: "V = a³", value: a ** 3, unit: "cm³" },
+    ],
+    net: ({ a }) => [
+      { kind: "poly", points: rectPts(0, 0, a, a), role: "lateral" },
+      { kind: "poly", points: rectPts(a, 0, a, a), role: "lateral" },
+      { kind: "poly", points: rectPts(2 * a, 0, a, a), role: "lateral" },
+      { kind: "poly", points: rectPts(3 * a, 0, a, a), role: "lateral" },
+      { kind: "poly", points: rectPts(a, -a, a, a), role: "base" },
+      { kind: "poly", points: rectPts(a, a, a, a), role: "base" },
     ],
   },
   {
     id: "prisma-triangular",
     name: "Prisma triangular",
     family: "Prismas",
-    desc: "Duas bases triangulares equiláteras ligadas por três retângulos.",
+    description:
+      "Prisma reto com duas bases triangulares equiláteras e três faces laterais retangulares.",
     params: [
-      { key: "a", label: "Aresta da base (a)", min: 1, max: 8, step: 0.1, def: 4 },
-      { key: "h", label: "Altura (h)", min: 1, max: 10, step: 0.1, def: 6 },
+      { key: "a", label: "Aresta da base (a)", min: 1, max: 8, step: 0.1, def: 3 },
+      { key: "h", label: "Altura (h)", min: 1, max: 10, step: 0.1, def: 5 },
     ],
-    counts: () => ({ F: 5, E: 9, V: 6 }),
+    counts: { faces: 5, edges: 9, vertices: 6 },
+    facts: [
+      "A base equilátera tem área a²√3/4.",
+      "É a forma clássica do prisma óptico que decompõe a luz.",
+    ],
     measures: ({ a, h }) => {
-      const ab = (Math.sqrt(3) / 4) * a * a;
+      const ab = (a * a * Math.sqrt(3)) / 4;
       return [
-        { label: "Área da base", formula: "A_b = (a²√3)/4", value: round(ab), unit: "cm²" },
-        { label: "Área lateral", formula: "A_l = 3·a·h", value: round(3 * a * h), unit: "cm²" },
-        {
-          label: "Área total",
-          formula: "A_t = 2·A_b + A_l",
-          value: round(2 * ab + 3 * a * h),
-          unit: "cm²",
-        },
-        { label: "Volume", formula: "V = A_b·h", value: round(ab * h), unit: "cm³" },
+        { label: "Área da base", formula: "A_b = a²√3/4", value: ab, unit: "cm²" },
+        { label: "Área lateral", formula: "A_l = 3·a·h", value: 3 * a * h, unit: "cm²" },
+        { label: "Área total", formula: "A_t = A_l + 2·A_b", value: 3 * a * h + 2 * ab, unit: "cm²" },
+        { label: "Volume", formula: "V = A_b·h", value: ab * h, unit: "cm³" },
       ];
     },
     net: ({ a, h }) => prismNet(3, a, h),
-    geometry: ({ a, h }) => ({ type: "prism", r: a / Math.sqrt(3), h, seg: 3 }),
-    facts: [
-      "A planificação é uma faixa de 3 retângulos com um triângulo em cada extremidade.",
-      "É o formato clássico do prisma óptico que decompõe a luz branca.",
-      "Euler: 5 + 6 − 9 = 2.",
-    ],
   },
   {
     id: "prisma-hexagonal",
     name: "Prisma hexagonal",
     family: "Prismas",
-    desc: "Duas bases hexagonais regulares ligadas por seis retângulos.",
+    description:
+      "Prisma reto com duas bases hexagonais regulares e seis faces laterais retangulares.",
     params: [
-      { key: "a", label: "Aresta da base (a)", min: 1, max: 5, step: 0.1, def: 2.5 },
-      { key: "h", label: "Altura (h)", min: 1, max: 10, step: 0.1, def: 6 },
+      { key: "a", label: "Aresta da base (a)", min: 1, max: 6, step: 0.1, def: 2 },
+      { key: "h", label: "Altura (h)", min: 1, max: 10, step: 0.1, def: 5 },
     ],
-    counts: () => ({ F: 8, E: 18, V: 12 }),
+    counts: { faces: 8, edges: 18, vertices: 12 },
+    facts: [
+      "A base hexagonal tem área 3a²√3/2.",
+      "É a geometria dos favos de mel: máxima área com mínimo material.",
+    ],
     measures: ({ a, h }) => {
-      const ab = (3 * Math.sqrt(3) * a * a) / 2;
+      const ab = (3 * a * a * Math.sqrt(3)) / 2;
       return [
-        { label: "Área da base", formula: "A_b = (3√3·a²)/2", value: round(ab), unit: "cm²" },
-        { label: "Área lateral", formula: "A_l = 6·a·h", value: round(6 * a * h), unit: "cm²" },
-        {
-          label: "Área total",
-          formula: "A_t = 2·A_b + A_l",
-          value: round(2 * ab + 6 * a * h),
-          unit: "cm²",
-        },
-        { label: "Volume", formula: "V = A_b·h", value: round(ab * h), unit: "cm³" },
+        { label: "Apótema da base", formula: "m = a√3/2", value: (a * Math.sqrt(3)) / 2, unit: "cm" },
+        { label: "Área da base", formula: "A_b = 3a²√3/2", value: ab, unit: "cm²" },
+        { label: "Área lateral", formula: "A_l = 6·a·h", value: 6 * a * h, unit: "cm²" },
+        { label: "Área total", formula: "A_t = A_l + 2·A_b", value: 6 * a * h + 2 * ab, unit: "cm²" },
+        { label: "Volume", formula: "V = A_b·h", value: ab * h, unit: "cm³" },
       ];
     },
     net: ({ a, h }) => prismNet(6, a, h),
-    geometry: ({ a, h }) => ({ type: "prism", r: a, h, seg: 6 }),
-    facts: [
-      "É a forma dos favos de mel: o hexágono cobre o plano sem deixar falhas.",
-      "A faixa lateral tem largura 6a, o perímetro da base.",
-      "Euler: 8 + 12 − 18 = 2.",
-    ],
   },
   {
     id: "piramide-triangular",
     name: "Pirâmide triangular",
     family: "Pirâmides",
-    desc: "Base triangular equilátera e três faces laterais triangulares.",
+    description:
+      "Pirâmide de base triangular equilátera com três faces laterais triangulares que se encontram no vértice.",
     params: [
-      { key: "a", label: "Aresta da base (a)", min: 1, max: 8, step: 0.1, def: 4 },
-      { key: "h", label: "Altura (h)", min: 1, max: 10, step: 0.1, def: 5 },
+      { key: "a", label: "Aresta da base (a)", min: 1, max: 8, step: 0.1, def: 3 },
+      { key: "h", label: "Altura (h)", min: 1, max: 10, step: 0.1, def: 4 },
     ],
-    counts: () => ({ F: 4, E: 6, V: 4 }),
+    counts: { faces: 4, edges: 6, vertices: 4 },
+    facts: [
+      "Quando todas as arestas são iguais, ela é um tetraedro regular.",
+      "O apótema da pirâmide vale √(h² + m²), com m = apótema da base.",
+    ],
     measures: ({ a, h }) => {
-      const ab = (Math.sqrt(3) / 4) * a * a;
-      const apo = a / (2 * Math.sqrt(3));
-      const g = Math.hypot(h, apo);
+      const m = a / (2 * Math.sqrt(3));
+      const ap = Math.hypot(h, m);
+      const ab = (a * a * Math.sqrt(3)) / 4;
       return [
-        { label: "Área da base", formula: "A_b = (a²√3)/4", value: round(ab), unit: "cm²" },
-        { label: "Apótema da pirâmide", formula: "g = √(h² + m²)", value: round(g), unit: "cm" },
-        {
-          label: "Área lateral",
-          formula: "A_l = (3·a·g)/2",
-          value: round((3 * a * g) / 2),
-          unit: "cm²",
-        },
+        { label: "Apótema da base", formula: "m = a√3/6", value: m, unit: "cm" },
+        { label: "Apótema da pirâmide", formula: "g = √(h² + m²)", value: ap, unit: "cm" },
+        { label: "Área da base", formula: "A_b = a²√3/4", value: ab, unit: "cm²" },
+        { label: "Área lateral", formula: "A_l = 3·(a·g)/2", value: (3 * a * ap) / 2, unit: "cm²" },
         {
           label: "Área total",
-          formula: "A_t = A_b + A_l",
-          value: round(ab + (3 * a * g) / 2),
+          formula: "A_t = A_l + A_b",
+          value: (3 * a * ap) / 2 + ab,
           unit: "cm²",
         },
-        { label: "Volume", formula: "V = (A_b·h)/3", value: round((ab * h) / 3), unit: "cm³" },
+        { label: "Volume", formula: "V = (A_b·h)/3", value: (ab * h) / 3, unit: "cm³" },
       ];
     },
     net: ({ a, h }) => pyramidNet(3, a, h),
-    geometry: ({ a, h }) => ({ type: "cone", r: a / Math.sqrt(3), h, seg: 3 }),
-    facts: [
-      "Quando todas as arestas são iguais ela é o tetraedro regular.",
-      "A planificação tem a base no centro e três triângulos que se dobram para cima.",
-      "Euler: 4 + 4 − 6 = 2.",
-    ],
   },
   {
     id: "piramide-quadrangular",
     name: "Pirâmide quadrangular",
     family: "Pirâmides",
-    desc: "Base quadrada e quatro faces laterais triangulares — a pirâmide do Egito.",
+    description:
+      "Pirâmide de base quadrada com quatro faces laterais triangulares — a forma das pirâmides do Egito.",
     params: [
-      { key: "a", label: "Aresta da base (a)", min: 1, max: 8, step: 0.1, def: 5 },
-      { key: "h", label: "Altura (h)", min: 1, max: 10, step: 0.1, def: 5 },
+      { key: "a", label: "Aresta da base (a)", min: 1, max: 8, step: 0.1, def: 4 },
+      { key: "h", label: "Altura (h)", min: 1, max: 10, step: 0.1, def: 4 },
     ],
-    counts: () => ({ F: 5, E: 8, V: 5 }),
+    counts: { faces: 5, edges: 8, vertices: 5 },
+    facts: [
+      "O apótema da pirâmide vale √(h² + (a/2)²).",
+      "A pirâmide de Quéops tem base de 230 m e altura original de 146 m.",
+    ],
     measures: ({ a, h }) => {
-      const g = Math.hypot(h, a / 2);
+      const ap = Math.hypot(h, a / 2);
       return [
-        { label: "Área da base", formula: "A_b = a²", value: round(a * a), unit: "cm²" },
-        { label: "Apótema da pirâmide", formula: "g = √(h² + (a/2)²)", value: round(g), unit: "cm" },
-        { label: "Área lateral", formula: "A_l = 2·a·g", value: round(2 * a * g), unit: "cm²" },
-        {
-          label: "Área total",
-          formula: "A_t = a² + 2·a·g",
-          value: round(a * a + 2 * a * g),
-          unit: "cm²",
-        },
-        { label: "Volume", formula: "V = (a²·h)/3", value: round((a * a * h) / 3), unit: "cm³" },
+        { label: "Apótema da pirâmide", formula: "g = √(h² + (a/2)²)", value: ap, unit: "cm" },
+        { label: "Área da base", formula: "A_b = a²", value: a * a, unit: "cm²" },
+        { label: "Área lateral", formula: "A_l = 2·a·g", value: 2 * a * ap, unit: "cm²" },
+        { label: "Área total", formula: "A_t = a² + 2·a·g", value: a * a + 2 * a * ap, unit: "cm²" },
+        { label: "Volume", formula: "V = (a²·h)/3", value: (a * a * h) / 3, unit: "cm³" },
       ];
     },
     net: ({ a, h }) => pyramidNet(4, a, h),
-    geometry: ({ a, h }) => ({ type: "cone", r: (a * Math.SQRT2) / 2, h, seg: 4 }),
-    facts: [
-      "A pirâmide de Quéops tem base de 230 m e altura original de 146 m.",
-      "A planificação forma uma estrela de quatro pontas.",
-      "Euler: 5 + 5 − 8 = 2.",
-    ],
   },
   {
     id: "tetraedro",
     name: "Tetraedro regular",
     family: "Poliedros de Platão",
-    desc: "Quatro faces triangulares equiláteras iguais.",
-    params: [{ key: "a", label: "Aresta (a)", min: 1, max: 8, step: 0.1, def: 4 }],
-    counts: () => ({ F: 4, E: 6, V: 4 }),
+    description:
+      "Poliedro de Platão formado por quatro triângulos equiláteros congruentes. É a pirâmide mais simples que existe.",
+    params: [{ key: "a", label: "Aresta (a)", min: 1, max: 8, step: 0.1, def: 3 }],
+    counts: { faces: 4, edges: 6, vertices: 4 },
+    facts: [
+      "Altura = a√6/3.",
+      "É o único sólido de Platão que é dual de si mesmo.",
+      "Sua planificação é um triângulo dividido em quatro.",
+    ],
     measures: ({ a }) => [
-      { label: "Área total", formula: "A = a²√3", value: round(a * a * Math.sqrt(3)), unit: "cm²" },
-      {
-        label: "Volume",
-        formula: "V = a³/(6√2)",
-        value: round(a ** 3 / (6 * Math.SQRT2)),
-        unit: "cm³",
-      },
-      {
-        label: "Altura",
-        formula: "H = a·√(2/3)",
-        value: round(a * Math.sqrt(2 / 3)),
-        unit: "cm",
-      },
+      { label: "Altura", formula: "H = a√6/3", value: (a * Math.sqrt(6)) / 3, unit: "cm" },
+      { label: "Área total", formula: "A_t = a²√3", value: a * a * Math.sqrt(3), unit: "cm²" },
+      { label: "Volume", formula: "V = a³√2/12", value: (a ** 3 * Math.SQRT2) / 12, unit: "cm³" },
     ],
     net: ({ a }) => {
-      const ht = (Math.sqrt(3) / 2) * a;
-      const big: Pt[] = [
-        [0, ht],
-        [a, ht],
-        [a / 2, 0],
+      const h = (a * Math.sqrt(3)) / 2;
+      const A: Pt = [0, h];
+      const B: Pt = [a, h];
+      const C: Pt = [2 * a, h];
+      const D: Pt = [a / 2, 0];
+      const E: Pt = [(3 * a) / 2, 0];
+      const F: Pt = [a, 2 * h];
+      return [
+        { kind: "poly", points: [A, B, D], role: "lateral" },
+        { kind: "poly", points: [B, C, E], role: "lateral" },
+        { kind: "poly", points: [D, E, B], role: "base" },
+        { kind: "poly", points: [A, B, F], role: "lateral" },
       ];
-      const mid = (p: Pt, q: Pt): Pt => [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
-      const shapes: NetShape[] = [{ kind: "poly", points: big }];
-      for (let i = 0; i < 3; i++) {
-        shapes.push({
-          kind: "poly",
-          points: rotate180About(big, mid(big[i]!, big[(i + 1) % 3]!)),
-        });
-      }
-      return shapes;
     },
-    geometry: ({ a }) => ({ type: "poly", solid: "tetra", r: (a * Math.sqrt(6)) / 4 }),
-    facts: [
-      "É o poliedro com o menor número possível de faces.",
-      "A planificação é um triângulo grande dividido em quatro triângulos iguais.",
-      "É autodual: seu dual é outro tetraedro.",
-    ],
   },
   {
     id: "dodecaedro",
     name: "Dodecaedro regular",
     family: "Poliedros de Platão",
-    desc: "Doze faces pentagonais regulares.",
-    params: [{ key: "a", label: "Aresta (a)", min: 0.5, max: 4, step: 0.1, def: 2 }],
-    counts: () => ({ F: 12, E: 30, V: 20 }),
+    description:
+      "Poliedro de Platão com doze faces pentagonais regulares. Sua planificação clássica são duas 'flores' de seis pentágonos unidas por uma aresta.",
+    params: [{ key: "a", label: "Aresta (a)", min: 1, max: 5, step: 0.1, def: 2 }],
+    counts: { faces: 12, edges: 30, vertices: 20 },
+    facts: [
+      "Em cada vértice encontram-se 3 pentágonos.",
+      "É o dual do icosaedro.",
+      "Platão o associava ao cosmos.",
+    ],
     measures: ({ a }) => [
       {
         label: "Área total",
-        formula: "A = 3√(25 + 10√5)·a²",
-        value: round(3 * Math.sqrt(25 + 10 * Math.sqrt(5)) * a * a),
+        formula: "A_t = 3a²√(25 + 10√5)",
+        value: 3 * a * a * Math.sqrt(25 + 10 * Math.sqrt(5)),
         unit: "cm²",
       },
       {
         label: "Volume",
-        formula: "V = ((15 + 7√5)/4)·a³",
-        value: round(((15 + 7 * Math.sqrt(5)) / 4) * a ** 3),
+        formula: "V = a³(15 + 7√5)/4",
+        value: (a ** 3 * (15 + 7 * Math.sqrt(5))) / 4,
         unit: "cm³",
       },
       {
         label: "Raio da esfera circunscrita",
         formula: "R = (a√3/4)(1 + √5)",
-        value: round(((a * Math.sqrt(3)) / 4) * (1 + Math.sqrt(5))),
+        value: ((a * Math.sqrt(3)) / 4) * (1 + Math.sqrt(5)),
         unit: "cm",
       },
     ],
-    net: ({ a }) => {
-      // duas "flores" de 6 pentágonos cada (12 faces), lado a lado, sem sobreposição
-      const f1 = pentagonFlower(a, 0, 0, -90);
-      const f2 = pentagonFlower(a, 0, 0, 90);
-      const xs = (shapes: NetShape[]) =>
-        shapes.flatMap((sh) => (sh.kind === "poly" ? sh.points.map((pt) => pt[0]) : []));
-      const gap = a * 0.35;
-      const dx = Math.max(...xs(f1)) - Math.min(...xs(f2)) + gap;
-      return [
-        ...f1,
-        ...f2.map((sh) =>
-          sh.kind === "poly"
-            ? { kind: "poly" as const, points: sh.points.map(([x, y]) => [x + dx, y] as Pt) }
-            : sh,
-        ),
-      ];
-    },
-    geometry: ({ a }) => ({
-      type: "poly",
-      solid: "dodeca",
-      r: ((a * Math.sqrt(3)) / 4) * (1 + Math.sqrt(5)),
-    }),
-    facts: [
-      "A planificação são duas 'flores' de 6 pentágonos: uma vira a tampa, a outra o fundo.",
-      "Tem 12 faces, 30 arestas e 20 vértices — Euler: 12 + 20 − 30 = 2.",
-      "É o dual do icosaedro.",
-    ],
+    net: ({ a }) => dodecaNet(a),
   },
   {
     id: "icosaedro",
     name: "Icosaedro regular",
     family: "Poliedros de Platão",
-    desc: "Vinte faces triangulares equiláteras.",
-    params: [{ key: "a", label: "Aresta (a)", min: 0.5, max: 4, step: 0.1, def: 2 }],
-    counts: () => ({ F: 20, E: 30, V: 12 }),
+    description:
+      "Poliedro de Platão com vinte faces triangulares equiláteras. Sua planificação é uma faixa de dez triângulos com cinco calotas em cada lado.",
+    params: [{ key: "a", label: "Aresta (a)", min: 1, max: 5, step: 0.1, def: 2 }],
+    counts: { faces: 20, edges: 30, vertices: 12 },
+    facts: [
+      "Em cada vértice encontram-se 5 triângulos.",
+      "É o dual do dodecaedro.",
+      "Muitos vírus têm capsídeo icosaédrico.",
+    ],
     measures: ({ a }) => [
       {
         label: "Área total",
-        formula: "A = 5√3·a²",
-        value: round(5 * Math.sqrt(3) * a * a),
+        formula: "A_t = 5a²√3",
+        value: 5 * a * a * Math.sqrt(3),
         unit: "cm²",
       },
       {
         label: "Volume",
-        formula: "V = (5(3 + √5)/12)·a³",
-        value: round(((5 * (3 + Math.sqrt(5))) / 12) * a ** 3),
+        formula: "V = (5/12)a³(3 + √5)",
+        value: (5 / 12) * a ** 3 * (3 + Math.sqrt(5)),
         unit: "cm³",
       },
       {
         label: "Raio da esfera circunscrita",
         formula: "R = (a/4)√(10 + 2√5)",
-        value: round((a / 4) * Math.sqrt(10 + 2 * Math.sqrt(5))),
+        value: (a / 4) * Math.sqrt(10 + 2 * Math.sqrt(5)),
         unit: "cm",
       },
     ],
-    net: ({ a }) => {
-      const ht = (Math.sqrt(3) / 2) * a;
-      const shapes: NetShape[] = [];
-      for (let k = 0; k < 10; k++) {
-        if (k % 2 === 0) {
-          const x = (k / 2) * a;
-          shapes.push({
-            kind: "poly",
-            points: [
-              [x, 2 * ht],
-              [x + a, 2 * ht],
-              [x + a / 2, ht],
-            ],
-          });
-          shapes.push({
-            kind: "poly",
-            points: [
-              [x, 2 * ht],
-              [x + a, 2 * ht],
-              [x + a / 2, 3 * ht],
-            ],
-          });
-        } else {
-          const x = ((k - 1) / 2) * a + a / 2;
-          shapes.push({
-            kind: "poly",
-            points: [
-              [x, ht],
-              [x + a, ht],
-              [x + a / 2, 2 * ht],
-            ],
-          });
-          shapes.push({
-            kind: "poly",
-            points: [
-              [x, ht],
-              [x + a, ht],
-              [x + a / 2, 0],
-            ],
-          });
-        }
-      }
-      return shapes;
-    },
-    geometry: ({ a }) => ({
-      type: "poly",
-      solid: "icosa",
-      r: (a / 4) * Math.sqrt(10 + 2 * Math.sqrt(5)),
-    }),
-    facts: [
-      "A planificação é uma faixa de 10 triângulos com 5 acima e 5 abaixo.",
-      "É o dado de 20 lados (d20) dos jogos de RPG.",
-      "Euler: 20 + 12 − 30 = 2.",
-    ],
+    net: ({ a }) => icosaNet(a),
   },
 ];
 
-export const defaultsFor = (s: Solid): Rec =>
-  Object.fromEntries(s.params.map((p) => [p.key, p.def])) as Rec;
+export const FAMILIES = Array.from(new Set(SOLIDS.map((s) => s.family)));
